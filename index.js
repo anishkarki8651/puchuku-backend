@@ -346,7 +346,11 @@ app.get('/api/stream', async (req, res) => {
     res.status(404).json({ error: 'No stream found' });
   } catch (error) {
     log.error('Stream', 'Scraping failed', { msg: error.message, cacheKey });
-    if (!res.headersSent) res.status(500).json({ error: 'Scraping failed' });
+    if (!res.headersSent) {
+      const payload = { error: 'Scraping failed' };
+      if (DEBUG) payload.detail = error.message;
+      res.status(500).json(payload);
+    }
   } finally {
     // Always clean up the context — this frees memory immediately
     if (context) {
