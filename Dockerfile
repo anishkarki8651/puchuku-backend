@@ -1,15 +1,15 @@
-FROM mcr.microsoft.com/playwright/node:latest
+FROM mcr.microsoft.com/playwright:v1.44.0-jammy
 
 WORKDIR /app
 
-# Copy package metadata and install dependencies first for better caching
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci
 
-# Copy application source
-COPY . ./
+# Install WebKit browser binaries
+RUN npx playwright install webkit
 
-ENV PORT=3001
+COPY . .
+
 EXPOSE 3001
 
-CMD ["node", "index.js"]
+CMD ["node", "server.js"]
