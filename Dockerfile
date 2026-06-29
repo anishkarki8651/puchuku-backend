@@ -2,12 +2,34 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# Install Playwright's system dependencies for WebKit
 RUN apt-get update && apt-get install -y \
-    libwoff1 \
-    libopus0 \
+    libgstreamer1.0-0 \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-gl \
+    libgtk-4-1 \
+    libpangocairo-1.0-0 \
+    libpango-1.0-0 \
+    libharfbuzz0b \
+    libharfbuzz-icu0 \
+    libcairo-gobject2 \
+    libcairo2 \
+    libgraphene-1.0-0 \
+    libatomic1 \
+    libsqlite3-0 \
+    liblcms2-2 \
+    libepoxy0 \
+    libfreetype6 \
+    libfontconfig1 \
+    libwebpmux3 \
     libwebp7 \
     libwebpdemux2 \
+    libwayland-egl1 \
+    libpsl5 \
+    libnghttp2-14 \
+    libavif15 \
+    libwoff1 \
+    libopus0 \
     libenchant-2-2 \
     libgudev-1.0-0 \
     libsecret-1-0 \
@@ -35,7 +57,6 @@ RUN apt-get update && apt-get install -y \
 COPY package*.json ./
 RUN npm ci
 
-# Install only WebKit (much smaller than all browsers)
 RUN npx playwright install webkit
 
 COPY . .
