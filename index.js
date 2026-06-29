@@ -173,9 +173,14 @@ app.get('/api/proxy', async (req, res) => {
 
   try {
     const baseUrl = getBaseUrl(req);
-    const upstream = await fetch(decodedUrl, { headers: UPSTREAM_HEADERS });
+    const headers = { ...UPSTREAM_HEADERS };
+    if (req.headers.range) {
+      headers['Range'] = req.headers.range;
+    }
 
-    if (!upstream.ok) {
+    const upstream = await fetch(decodedUrl, { headers });
+
+    if (!upstream.ok && upstream.status !== 206) {
       log.warn('Proxy', 'Upstream non-OK', { status: upstream.status, url: decodedUrl });
       return res.status(upstream.status).send(upstream.statusText);
     }
@@ -222,6 +227,17 @@ app.get('/api/proxy', async (req, res) => {
 
       res.setHeader('Content-Type', contentType || 'application/vnd.apple.mpegurl');
       return res.send(rewritten);
+    }
+
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+
+    if (upstream.status === 206) {
+      res.status(206);
+      const contentRange = upstream.headers.get('content-range');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+      const acceptRanges = upstream.headers.get('accept-ranges');
+      if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
     }
 
     if (contentType) res.setHeader('Content-Type', contentType);
@@ -286,7 +302,7 @@ app.get('/api/stream', async (req, res) => {
     // Block heavy resources to save RAM
     await page.route('**/*', (route) => {
       const type = route.request().resourceType();
-      if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
+      if (['image', 'stylesheet', 'font'].includes(type)) {
         route.abort();
       } else {
         route.continue();
@@ -296,24 +312,40 @@ app.get('/api/stream', async (req, res) => {
     log.info('Stream', 'Scraping start', { vidlinkUrl });
 
     const extractionPromise = new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        log.warn('Stream', 'Extraction timed out (15s)', { cacheKey });
-        resolve(null);
-      }, 15000);
+      let resolved = false;
+      const doResolve = (data) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        clearInterval(pollInterval);
+        resolve(data);
+      };
 
-      // Playwright: intercept responses
+      const timer = setTimeout(() => {
+        log.warn('Stream', 'Extraction timed out (60s)', { cacheKey });
+        doResolve(null);
+      }, 60000);
+
+      // Method 1: Intercept responses for known API patterns (legacy fallback)
       page.on('response', async (response) => {
         const url = response.url();
         if (url.includes('/api/b/movie/') || url.includes('/api/b/tv/')) {
           try {
             const json = await response.json();
-            if (json?.stream?.playlist) {
-              clearTimeout(timer);
-              log.debug('Stream', 'Playlist found', {
+            let streamUrl = json?.stream?.playlist;
+            if (!streamUrl && json?.stream?.qualities) {
+              const qs = Object.keys(json.stream.qualities).sort((a, b) => parseInt(b) - parseInt(a));
+              if (qs.length > 0) {
+                streamUrl = json.stream.qualities[qs[0]].url;
+              }
+            }
+            if (streamUrl) {
+              log.debug('Stream', 'Found via legacy API intercept', {
+                url: streamUrl,
                 captions: (json.stream.captions || []).length,
               });
-              resolve({
-                playlist: json.stream.playlist,
+              doResolve({
+                playlist: streamUrl,
                 captions: json.stream.captions || [],
               });
             }
@@ -322,6 +354,45 @@ app.get('/api/stream', async (req, res) => {
           }
         }
       });
+
+      // Method 2: Poll DOM for <video> element with a valid src
+      const pollInterval = setInterval(async () => {
+        try {
+          const info = await page.evaluate(() => {
+            const video = document.querySelector('video');
+            if (!video) return null;
+            const src = video.src || video.currentSrc;
+            const sourceEl = video.querySelector('source');
+            const sourceSrc = sourceEl ? sourceEl.src : null;
+            const videoUrl = src || sourceSrc;
+            if (!videoUrl || videoUrl.startsWith('blob:')) return null;
+
+            // Extract subtitle tracks from <track> elements
+            const tracks = Array.from(document.querySelectorAll('track'));
+            const captions = tracks
+              .filter(t => t.kind === 'subtitles' || t.kind === 'captions')
+              .map(t => ({
+                url: t.src,
+                language: t.srclang || 'unknown',
+                label: t.label || t.srclang || 'Unknown',
+              }));
+
+            return { videoUrl, captions };
+          });
+          if (info?.videoUrl) {
+            log.debug('Stream', 'Found via DOM poll', {
+              url: info.videoUrl,
+              captions: (info.captions || []).length,
+            });
+            doResolve({
+              playlist: info.videoUrl,
+              captions: info.captions || [],
+            });
+          }
+        } catch {
+          // Page may not be ready yet, keep polling
+        }
+      }, 500);
     });
 
     // Don't await navigation — let the response listener fire
