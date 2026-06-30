@@ -299,6 +299,16 @@ app.get('/api/stream', async (req, res) => {
 
     page = await context.newPage();
 
+    page.on('console', msg => log.debug('PageConsole', `${msg.type()}: ${msg.text()}`));
+page.on('pageerror', err => log.warn('PageError', err.message));
+page.on('requestfailed', req => log.warn('PageReqFail', `${req.url()} - ${req.failure()?.errorText}`));
+page.on('response', res => {
+  const u = res.url();
+  if (u.includes('vidlink') || u.includes('/api/b/') || u.includes('m3u8')) {
+    log.debug('PageResp', `${res.status()} ${u}`);
+  }
+});
+
     // Block heavy resources to save RAM
     await page.route('**/*', (route) => {
       const type = route.request().resourceType();
