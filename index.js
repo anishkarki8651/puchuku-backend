@@ -290,12 +290,13 @@ app.get('/api/stream', async (req, res) => {
     // Each request gets its own isolated context (like incognito)
     // This is the Playwright equivalent of newPage() but properly isolated
     context = await browser.newContext({
-      userAgent: UPSTREAM_HEADERS['User-Agent'],
-      extraHTTPHeaders: {
-        'Referer': UPSTREAM_HEADERS['Referer'],
-        'Origin': UPSTREAM_HEADERS['Origin'],
-      },
-    });
+  userAgent: UPSTREAM_HEADERS['User-Agent'],
+  extraHTTPHeaders: {
+    'Referer': UPSTREAM_HEADERS['Referer'],
+    'Origin': UPSTREAM_HEADERS['Origin'],
+  },
+  ignoreHTTPSErrors: true,
+});
 
     page = await context.newPage();
 
